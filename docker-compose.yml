@@ -5,6 +5,5 @@ services:
       dockerfile: Dockerfile
     container_name: dash-distribuicao
     ports:
-      - "8080:80"
+      - "1848:80"
     restart: unless-stopped
-analis
