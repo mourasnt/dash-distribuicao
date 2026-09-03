@@ -1,0 +1,9 @@
+services:
+  dash-distribuicao:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dash-distribuicao
+    ports:
+      - "8080:80"
+    restart: unless-stopped

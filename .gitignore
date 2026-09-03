@@ -1,0 +1,12 @@
+# Dependências
+node_modules/
+
+# Saída de build
+dist/
+
+# Credenciais da service account — NUNCA commitar
+credentials.json
+
+# Dados gerados
+*.log
+.DS_Store
