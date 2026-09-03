@@ -263,7 +263,7 @@ export default function App() {
     <Layout className="app-layout">
       <Header className="header">
         <div className="nav-brand">
-          <img src="/logo-3zx.png" alt="Logo 3ZX" className="nav-logo" />
+          <img src="logo-3zx.png" alt="Logo 3ZX" className="nav-logo" />
           <div className="nav-wordmark">
             <span className="nav-eyebrow">3ZX Logística</span>
             <Typography.Title level={3} className="nav-title" style={{ color: '#fff' }}>Follow Distribuição</Typography.Title>
