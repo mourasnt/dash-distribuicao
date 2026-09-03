@@ -73,6 +73,7 @@ async function main() {
     ocorrencia: findCol(headers, 'Ocorr'),
     prod: findCol(headers, 'Produtividade'),
     paradas: findCol(headers, 'Paradas'),
+    devolucion: findCol(headers, 'evolu'),
     data: findCol(headers, 'Data'),
     romaneio: findCol(headers, 'Romaneio'),
     placa: findCol(headers, 'laca'),
@@ -95,8 +96,9 @@ async function main() {
     const nome = String(get(idx.nome) ?? '').trim();
     const prod = parseProd(get(idx.prod));
     const paradas = parseFloat(String(get(idx.paradas) ?? '').replace(',', '.'));
+    const devolucion = parseFloat(String(get(idx.devolucion) ?? '').replace(',', '.'));
     const data = parseData(get(idx.data));
-    records.push({ cliente, status, horario, ocorrencia, romaneio, placa, nome, prod, paradas, data });
+    records.push({ cliente, status, horario, ocorrencia, romaneio, placa, nome, prod, paradas, devolucion, data });
   }
 
   const statusOrd = (s) => s;
@@ -106,8 +108,18 @@ async function main() {
   const aderenciaOrigemCount = records.filter(
     (r) => r.horario === 'NO PRAZO' && r.status === 'ENTREGAS FINALIZADAS'
   ).length;
-  const prodList = records.map((r) => r.prod).filter((p) => !isNaN(p));
-  const produtividadeMedia = prodList.length ? prodList.reduce((a, b) => a + b, 0) / prodList.length : 0;
+  // Produtividade por carga (solo ENTREGAS FINALIZADAS com paradas>0):
+// (Paradas - Devolucion) / Paradas. Ignora la columna "Produtividade" de la planilla.
+const prodCarga = (r) => {
+  if (r.status !== 'ENTREGAS FINALIZADAS') return null;
+  const p = r.paradas;
+  if (isNaN(p) || !(p > 0)) return null;
+  const d = isNaN(r.devolucion) ? 0 : r.devolucion;
+  return Math.max((p - d) / p, 0);
+};
+const prodVals = records.map(prodCarga).filter((v) => v !== null);
+const produtividadeMedia = prodVals.length ? prodVals.reduce((a, b) => a + b, 0) / prodVals.length : 0;
+const prodCargasN = prodVals.length;
 
   const statusOrdem = [
     'ENTREGAS FINALIZADAS', 'CANCELADO PELO CLIENTE', 'NO SHOW',
@@ -163,7 +175,7 @@ async function main() {
     const s = records.filter((r) => r.status === 'ENTREGAS FINALIZADAS' && r.cliente === cl);
     if (s.length === 0) continue;
     const paradas = s.reduce((a, r) => a + (isNaN(r.paradas) ? 0 : r.paradas), 0);
-    const prods = s.map((r) => r.prod).filter((p) => !isNaN(p));
+    const prods = s.map(prodCarga).filter((v) => v !== null);
     const prod = prods.length ? prods.reduce((a, b) => a + b, 0) / prods.length : 0;
     prodPorCliente[cl] = { paradas: Math.round(paradas), produtividade: Math.round(prod * 10000) / 10000, total: s.length };
   }
@@ -209,8 +221,9 @@ async function main() {
         fin++;
         if (r.horario === 'NO PRAZO') ader++;
       }
-      if (!isNaN(r.prod)) {
-        prodSum += r.prod;
+      const pc = prodCarga(r);
+      if (pc !== null) {
+        prodSum += pc;
         prodN++;
       }
     }
@@ -222,7 +235,8 @@ async function main() {
       const p = (gProd[r.cliente] = gProd[r.cliente] || { paradas: 0, prod_sum: 0, total: 0 });
       p.total++;
       if (!isNaN(r.paradas)) p.paradas += r.paradas;
-      if (!isNaN(r.prod)) p.prod_sum += r.prod;
+      const pc = prodCarga(r);
+      if (pc !== null) p.prod_sum += pc;
     }
 
     diario[datestr] = {
@@ -250,6 +264,7 @@ async function main() {
       finalizadas,
       aderenciaOrigemCount,
       produtividadeMedia: Math.round(produtividadeMedia * 10000) / 10000,
+      prodCargasN,
     },
     cruzada,
     totalPorStatus,

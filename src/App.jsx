@@ -20,7 +20,7 @@ const { RangePicker } = DatePicker;
 const KPI_CONFIG = [
   { label: 'Total de Cargas', icon: <DatabaseOutlined />, get: (k) => fmtNum(k.total), color: COLORS.primary },
   { label: 'Aderência no Show', icon: <FileDoneOutlined />, get: (k) => fmtPct(k.total ? 1 - k.noShow / k.total : 0), color: COLORS.accent },
-  { label: 'Aderência Origem', icon: <FieldTimeOutlined />, get: (k) => fmtPct(k.total ? k.aderOrigem / k.total : 0), color: COLORS.secondary },
+  { label: 'Aderência Origem', icon: <FieldTimeOutlined />, get: (k) => fmtPct(k.finalizadas ? k.aderOrigem / k.finalizadas : 0), color: COLORS.secondary },
   { label: 'Cancelamentos', icon: <CloseCircleOutlined />, get: (k) => fmtPct(k.total ? k.cancel / k.total : 0), color: COLORS.destructive },
   { label: 'Produtividade Média', icon: <RiseOutlined />, get: (k) => fmtPct(k.prod), color: COLORS.success },
 ];
@@ -111,8 +111,8 @@ export default function App() {
         }
       }
 
-      prod.sum = DASH_DATA.kpis.produtividadeMedia * DASH_DATA.kpis.total;
-      prod.n = DASH_DATA.kpis.total;
+      prod.sum = DASH_DATA.kpis.produtividadeMedia * DASH_DATA.kpis.prodCargasN;
+      prod.n = DASH_DATA.kpis.prodCargasN;
     } else {
       Object.entries(DASH_DATA.diario).forEach(([datestr, dv]) => {
         if (!inRange(datestr)) return;

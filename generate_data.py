@@ -19,6 +19,7 @@ COL_HORARIO = find_col('Status do hor')
 COL_OCORRENCIA = find_col('Ocorr')
 COL_PROD = find_col('Produtividade')
 COL_PARADAS = find_col('Paradas')
+COL_DEVOLUCION = find_col('evolu')
 COL_DATA = find_col('Data')
 COL_ROMANEIO = find_col('Romaneio')
 COL_NOME = find_col('Nome')
@@ -29,6 +30,7 @@ df['CLIENTE'] = df['CLIENTE'].fillna('SEM CLIENTE').astype(str)
 df = df[df['CLIENTE'] != 'SEM CLIENTE'].copy()
 df['PROD'] = pd.to_numeric(df[COL_PROD], errors='coerce')
 df['PARADAS'] = pd.to_numeric(df[COL_PARADAS], errors='coerce')
+df['DEVOLUCION'] = pd.to_numeric(df[COL_DEVOLUCION], errors='coerce')
 df['DATA'] = pd.to_datetime(df[COL_DATA], errors='coerce')
 df['STATUS'] = df['STATUS'].fillna('SEM STATUS').astype(str)
 df['HORARIO'] = df[COL_HORARIO].fillna('').astype(str).str.strip()
@@ -42,7 +44,20 @@ no_show = (df['STATUS'] == 'NO SHOW').sum()
 cancelados = (df['STATUS'] == 'CANCELADO PELO CLIENTE').sum()
 finalizadas = (df['STATUS'] == 'ENTREGAS FINALIZADAS').sum()
 aderencia_origem_count = ((df['HORARIO'] == 'NO PRAZO') & (df['STATUS'] == 'ENTREGAS FINALIZADAS')).sum()
-produtividade_media = df['PROD'].mean()
+
+# Produtividade: ignora la columna "Produtividade" de la planilla.
+# Por carga finalizada: (Paradas - Devolucion) / Paradas. Solo ENTREGAS FINALIZADAS.
+def prod_carga(r):
+    p = r['PARADAS']
+    if not pd.notna(p) or p <= 0:
+        return None
+    d = r['DEVOLUCION'] if pd.notna(r['DEVOLUCION']) else 0
+    return max((p - d) / p, 0.0)
+
+fin_mask = df['STATUS'] == 'ENTREGAS FINALIZADAS'
+prod_vals = df[fin_mask].apply(prod_carga, axis=1).dropna()
+produtividade_media = float(prod_vals.mean()) if len(prod_vals) else 0.0
+prod_cargas_n = int(len(prod_vals))
 
 status_ordem = [
     'ENTREGAS FINALIZADAS', 'CANCELADO PELO CLIENTE', 'NO SHOW',
@@ -93,14 +108,15 @@ no_show_por_cliente, no_show_ocorrencias = ocorrencias_por(df['STATUS'] == 'NO S
 atraso_mask = (df['STATUS'] == 'ENTREGAS FINALIZADAS') & (df['HORARIO'] == 'FORA DO PRAZO')
 atraso_por_cliente, atraso_ocorrencias = ocorrencias_por(atraso_mask)
 
-# Produtividade: por cliente -> paradas, prod media, total
+# Produtividade por cliente (entregas finalizadas): media de (Paradas-Devolucion)/Paradas
 prod_por_cliente = {}
 for cl in clientes:
     s = df[(df['STATUS'] == 'ENTREGAS FINALIZADAS') & (df['CLIENTE'] == cl)]
     if len(s) == 0:
         continue
     paradas = int(s['PARADAS'].sum(skipna=True))
-    prod = float(s['PROD'].mean()) if s['PROD'].notna().any() else 0
+    vals = s.apply(prod_carga, axis=1).dropna()
+    prod = float(vals.mean()) if len(vals) else 0
     prod_por_cliente[cl] = {'paradas': paradas, 'produtividade': round(prod, 4), 'total': int(len(s))}
 
 # Ocorrencias de produtividade (entregas finalizadas)
@@ -148,14 +164,15 @@ for datestr, g in df.groupby('DATASTR'):
             fin += 1
             if r['HORARIO'] == 'NO PRAZO':
                 ader += 1
-        if pd.notna(r['PROD']):
-            prod_sum += r['PROD']
+        pc = prod_carga(r) if st == 'ENTREGAS FINALIZADAS' else None
+        if pc is not None:
+            prod_sum += pc
             prod_n += 1
 
     # ---- Ocorrências de drill por dia (para o filtro de data) ----
     g_noshow = occ_map(g[g['STATUS'] == 'NO SHOW'])
     g_atraso = occ_map(g[(g['STATUS'] == 'ENTREGAS FINALIZADAS') & (g['HORARIO'] == 'FORA DO PRAZO')])
-    # produtividade por cliente (entregas finalizadas): paradas + prod_sum para média ponderada
+    # produtividade por cliente (entregas finalizadas): paradas + prod_sum para la media
     g_prod = {}
     for _, r in g[g['STATUS'] == 'ENTREGAS FINALIZADAS'].iterrows():
         cl = r['CLIENTE']
@@ -163,8 +180,9 @@ for datestr, g in df.groupby('DATASTR'):
         p['total'] += 1
         if pd.notna(r['PARADAS']):
             p['paradas'] += int(r['PARADAS'])
-        if pd.notna(r['PROD']):
-            p['prod_sum'] += r['PROD']
+        pc = prod_carga(r)
+        if pc is not None:
+            p['prod_sum'] += pc
 
     diario[datestr] = {
         'cruzada': cruz,
@@ -190,6 +208,7 @@ result = {
         'finalizadas': int(finalizadas),
         'aderenciaOrigemCount': int(aderencia_origem_count),
         'produtividadeMedia': round(produtividade_media, 4),
+        'prodCargasN': int(prod_cargas_n),
     },
     'cruzada': cruzada,
     'totalPorStatus': total_por_status,
