@@ -35,7 +35,15 @@ app.get('/api/data', (_req, res) => {
   res.json({ data: cache, updatedAt: lastUpdate });
 });
 
-app.use(express.static(join(__dirname, 'dist'), { index: 'index.html' }));
+app.use(express.static(join(__dirname, 'dist'), {
+  index: 'index.html',
+  maxAge: '1y',
+  setHeaders(res, filePath) {
+    if (filePath.endsWith('.html')) {
+      res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    }
+  },
+}));
 
 app.get('*', (_req, res) => {
   res.sendFile(join(__dirname, 'dist', 'index.html'));

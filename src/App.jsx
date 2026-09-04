@@ -536,7 +536,7 @@ function ClientesBars({ agg }) {
   const option = useMemo(() => {
     const entries = Object.entries(agg.totalCliente)
       .filter(([, v]) => v > 0)
-      .sort((a, b) => b[1] - a[1])
+      .sort((a, b) => a[1] - b[1])
       .slice(0, 14);
     const names = entries.map(([c]) => shortName(c));
     const values = entries.map(([, v]) => v);
