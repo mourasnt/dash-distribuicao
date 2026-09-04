@@ -22,7 +22,7 @@ function useDashData() {
 
   const fetchData = useCallback(async () => {
     try {
-      const res = await fetch('/api/data');
+      const res = await fetch('/distribuicao/api/data');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       setDash(json.data);
@@ -298,7 +298,7 @@ export default function App() {
       <Layout className="app-layout">
         <Header className="header">
           <div className="nav-brand">
-            <img src="/logo-3zx.png" alt="Logo 3ZX" className="nav-logo" />
+            <img src="/distribuicao/logo-3zx.png" alt="Logo 3ZX" className="nav-logo" />
             <div className="nav-wordmark">
               <span className="nav-eyebrow">3ZX Logistica</span>
               <Typography.Title level={3} className="nav-title" style={{ color: '#fff' }}>Follow Distribuicao</Typography.Title>
@@ -316,7 +316,7 @@ export default function App() {
     <Layout className="app-layout">
       <Header className="header">
         <div className="nav-brand">
-          <img src="/logo-3zx.png" alt="Logo 3ZX" className="nav-logo" />
+          <img src="/distribuicao/logo-3zx.png" alt="Logo 3ZX" className="nav-logo" />
           <div className="nav-wordmark">
             <span className="nav-eyebrow">3ZX Logística</span>
             <Typography.Title level={3} className="nav-title" style={{ color: '#fff' }}>Follow Distribuição</Typography.Title>
