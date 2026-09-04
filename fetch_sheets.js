@@ -1,25 +1,29 @@
 #!/usr/bin/env node
-// Génération de src/data.js à partir de la planilha Google Sheets (Torre de controle).
+// Leitura da planilha Google Sheets (Torre de controle).
 // Utilise la service account (credentials.json) — la clé ne sort jamais du serveur.
-// Uso: node fetch_sheets.js   (ou: npm run fetch:data)
+// Exporta fetchData() para uso pelo server.js e também funciona como CLI.
 import { google } from 'googleapis';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SPREADSHEET_ID = '1N3VkIFdunMnRw13DmSvcUBJkzb5U7yc00050G5-t90I';
 const SHEET = 'Torre de controle';
-const HEADER_ROW = 2; // 1-based: o cabeçalho começa na linha 2 -> índice 1
+const HEADER_ROW = 2;
 
-const credentials = JSON.parse(readFileSync(join(__dirname, 'credentials.json'), 'utf8'));
+let _sheets = null;
 
-const auth = new google.auth.GoogleAuth({
-  credentials,
-  scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
-});
-
-const sheets = google.sheets({ version: 'v4', auth });
+function getSheets() {
+  if (_sheets) return _sheets;
+  const credentials = JSON.parse(readFileSync(join(__dirname, 'credentials.json'), 'utf8'));
+  const auth = new google.auth.GoogleAuth({
+    credentials,
+    scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
+  });
+  _sheets = google.sheets({ version: 'v4', auth });
+  return _sheets;
+}
 
 function findCol(headers, substr) {
   for (let i = 0; i < headers.length; i++) {
@@ -29,7 +33,6 @@ function findCol(headers, substr) {
   throw new Error(`Coluna não encontrada contendo: "${substr}"`);
 }
 
-// Converte percentual textual pt-BR ("100,00%", "96,15%") ou número em fração.
 function parseProd(v) {
   if (v === null || v === undefined) return NaN;
   if (typeof v === 'number') return v;
@@ -42,15 +45,12 @@ function parseProd(v) {
   return isPct ? n / 100 : n;
 }
 
-// Normaliza data dd/mm/aaaa (ou com -) para timestamp local
 function parseData(v) {
   if (v === null || v === undefined) return null;
   const s = String(v).trim();
   if (!s) return null;
-  // dd/mm/yyyy
   let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (m) return new Date(+m[3], +m[2] - 1, +m[1]);
-  // yyyy-mm-dd
   m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
   if (m) return new Date(+m[1], +m[2] - 1, +m[3]);
   const d = new Date(s);
@@ -60,7 +60,8 @@ function parseData(v) {
 const fmtDate = (d) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-async function main() {
+export async function fetchData() {
+  const sheets = getSheets();
   const range = `${SHEET}!A1:V`;
   const res = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range });
   const all = res.data.values || [];
@@ -81,13 +82,12 @@ async function main() {
     status: findCol(headers, 'STATUS'),
   };
 
-  // Agrupa por data formata para evitar NaN
   const records = [];
   for (let r = HEADER_ROW; r < all.length; r++) {
     const row = all[r];
     const get = (i) => (row && i < row.length ? row[i] : '');
     const cliente = String(get(idx.cliente) ?? '').trim() || 'SEM CLIENTE';
-    if (cliente === 'SEM CLIENTE') continue; // desconsidera cargas sem cliente
+    if (cliente === 'SEM CLIENTE') continue;
     const status = String(get(idx.status) ?? '').trim() || 'SEM STATUS';
     const horario = String(get(idx.horario) ?? '').trim();
     const ocorrencia = String(get(idx.ocorrencia) ?? '').trim();
@@ -101,25 +101,23 @@ async function main() {
     records.push({ cliente, status, horario, ocorrencia, romaneio, placa, nome, prod, paradas, devolucion, data });
   }
 
-  const statusOrd = (s) => s;
   const noShow = records.filter((r) => r.status === 'NO SHOW').length;
   const cancelados = records.filter((r) => r.status === 'CANCELADO PELO CLIENTE').length;
   const finalizadas = records.filter((r) => r.status === 'ENTREGAS FINALIZADAS').length;
   const aderenciaOrigemCount = records.filter(
     (r) => r.horario === 'NO PRAZO' && r.status === 'ENTREGAS FINALIZADAS'
   ).length;
-  // Produtividade por carga (solo ENTREGAS FINALIZADAS com paradas>0):
-// (Paradas - Devolucion) / Paradas. Ignora la columna "Produtividade" de la planilla.
-const prodCarga = (r) => {
-  if (r.status !== 'ENTREGAS FINALIZADAS') return null;
-  const p = r.paradas;
-  if (isNaN(p) || !(p > 0)) return null;
-  const d = isNaN(r.devolucion) ? 0 : r.devolucion;
-  return Math.max((p - d) / p, 0);
-};
-const prodVals = records.map(prodCarga).filter((v) => v !== null);
-const produtividadeMedia = prodVals.length ? prodVals.reduce((a, b) => a + b, 0) / prodVals.length : 0;
-const prodCargasN = prodVals.length;
+
+  const prodCarga = (r) => {
+    if (r.status !== 'ENTREGAS FINALIZADAS') return null;
+    const p = r.paradas;
+    if (isNaN(p) || !(p > 0)) return null;
+    const d = isNaN(r.devolucion) ? 0 : r.devolucion;
+    return Math.max((p - d) / p, 0);
+  };
+  const prodVals = records.map(prodCarga).filter((v) => v !== null);
+  const produtividadeMedia = prodVals.length ? prodVals.reduce((a, b) => a + b, 0) / prodVals.length : 0;
+  const prodCargasN = prodVals.length;
 
   const statusOrdem = [
     'ENTREGAS FINALIZADAS', 'CANCELADO PELO CLIENTE', 'NO SHOW',
@@ -128,7 +126,6 @@ const prodCargasN = prodVals.length;
   ];
   const clientes = [...new Set(records.map((r) => r.cliente))].sort((a, b) => a.localeCompare(b));
 
-  // Tabela cruzada status x cliente
   const cruzada = {};
   const totalPorStatus = {};
   const totalPorCliente = {};
@@ -138,7 +135,6 @@ const prodCargasN = prodVals.length;
     totalPorCliente[r.cliente] = (totalPorCliente[r.cliente] || 0) + 1;
   }
 
-  // Datas min/max
   const datas = records.map((r) => r.data).filter(Boolean);
   let dataMin = null;
   let dataMax = null;
@@ -147,7 +143,6 @@ const prodCargasN = prodVals.length;
     dataMax = fmtDate(new Date(Math.max(...datas.map((d) => d.getTime()))));
   }
 
-  // ---------- DRILL-DOWNS ----------
   const ocorrenciasPor = (mask) => {
     const qtd = {};
     const occ = {};
@@ -182,7 +177,6 @@ const prodCargasN = prodVals.length;
 
   const [, prodOcorrencias] = ocorrenciasPor((r) => r.status === 'ENTREGAS FINALIZADAS');
 
-  // ---- AGREGADOS DIARIOS ----
   const diario = {};
   const byDate = new Map();
   for (const r of records) {
@@ -256,7 +250,7 @@ const prodCargasN = prodVals.length;
     };
   }
 
-  const result = {
+  return {
     kpis: {
       total: records.length,
       noShow,
@@ -281,18 +275,24 @@ const prodCargasN = prodVals.length;
       produtividadePorCliente: prodPorCliente,
     },
   };
-
-  const out = '// AUTO-GERADO - não editar manualmente\n' +
-    `// Fonte: ${SHEET} (Google Sheets) · gerado em ${new Date().toISOString()}\n` +
-    'export const DASH_DATA = ' + JSON.stringify(result, null, 2) + ';\n';
-
-  writeFileSync(join(__dirname, 'src', 'data.js'), out, 'utf8');
-  console.log(`OK - src/data.js gerado (${records.length} registros, ${clientes.length} clientes)`);
-  console.log(`Total: ${records.length} | NoShow: ${noShow} | Cancelados: ${cancelados} | Finalizadas: ${finalizadas}`);
-  console.log(`Produtividade média: ${(produtividadeMedia * 100).toFixed(2)}%`);
 }
 
-main().catch((e) => {
-  console.error('Erro ao buscar dados da planilha:', e.message);
-  process.exit(1);
-});
+const isMain = process.argv[1] && (
+  process.argv[1].endsWith('fetch_sheets.js') ||
+  process.argv[1].endsWith('fetch:data')
+);
+
+if (isMain) {
+  const { writeFileSync } = await import('node:fs');
+  fetchData().then((result) => {
+    const out = '// AUTO-GERADO - não editar manualmente\n' +
+      `// Fonte: ${SHEET} (Google Sheets) · gerado em ${new Date().toISOString()}\n` +
+      'export const DASH_DATA = ' + JSON.stringify(result, null, 2) + ';\n';
+    writeFileSync(join(__dirname, 'src', 'data.js'), out, 'utf8');
+    console.log(`OK - src/data.js gerado (${result.kpis.total} registros, ${result.clientes.length} clientes)`);
+    console.log(`Produtividade média: ${(result.kpis.produtividadeMedia * 100).toFixed(2)}%`);
+  }).catch((e) => {
+    console.error('Erro ao buscar dados da planilha:', e.message);
+    process.exit(1);
+  });
+}

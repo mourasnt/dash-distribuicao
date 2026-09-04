@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Layout, Card, Select, DatePicker, Button, Table, Row, Col, Flex, Space, Typography } from 'antd';
+import { useMemo, useState, useEffect, useCallback } from 'react';
+import { Layout, Card, Select, DatePicker, Button, Table, Row, Col, Flex, Space, Typography, Spin } from 'antd';
 import {
   DatabaseOutlined,
   FileDoneOutlined,
@@ -9,10 +9,39 @@ import {
   ReloadOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
-import { DASH_DATA } from './data.js';
 import { COLORS, STATUS_COLORS, fmtPct, fmtNum, shortName, SPACING } from './utils.js';
 import DrillCard from './DrillCard.jsx';
 import EChart from './EChart.jsx';
+
+const POLL_MS = 15_000;
+
+function useDashData() {
+  const [dash, setDash] = useState(null);
+  const [updatedAt, setUpdatedAt] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetchData = useCallback(async () => {
+    try {
+      const res = await fetch('/api/data');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      setDash(json.data);
+      setUpdatedAt(json.updatedAt);
+    } catch (err) {
+      console.error('[poll] Erro ao buscar dados:', err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchData();
+    const id = setInterval(fetchData, POLL_MS);
+    return () => clearInterval(id);
+  }, [fetchData]);
+
+  return { dash, updatedAt, loading };
+}
 
 const { Header, Content, Footer } = Layout;
 const { RangePicker } = DatePicker;
@@ -26,17 +55,18 @@ const KPI_CONFIG = [
 ];
 
 export default function App() {
+  const { dash: DASH_DATA, updatedAt, loading } = useDashData();
   const [cliente, setCliente] = useState('all');
   const [status, setStatus] = useState('all');
-  const [range, setRange] = useState(null); // [dayjs|null, dayjs|null]
+  const [range, setRange] = useState(null);
 
   const clientes = useMemo(
-    () => (DASH_DATA.clientes || []).filter((c) => c !== 'SEM CLIENTE'),
-    []
+    () => (DASH_DATA?.clientes || []).filter((c) => c !== 'SEM CLIENTE'),
+    [DASH_DATA]
   );
   const statuses = useMemo(
-    () => DASH_DATA.statusOrdem.filter((s) => (DASH_DATA.totalPorStatus[s] || 0) > 0),
-    []
+    () => (DASH_DATA?.statusOrdem || []).filter((s) => (DASH_DATA?.totalPorStatus[s] || 0) > 0),
+    [DASH_DATA]
   );
 
   const dataIni = range && range[0] ? range[0].format('YYYY-MM-DD') : '';
@@ -50,8 +80,10 @@ export default function App() {
     setRange(null);
   };
 
-  // ===== Agregação respeitando filtros (mesma lógica anterior) =====
+  const EMPTY_AGG = { cruzada: {}, totalStatus: {}, totalCliente: {}, kpis: { total: 0, noShow: 0, cancel: 0, finalizadas: 0, aderOrigem: 0, prod: 0 } };
+
   const agg = useMemo(() => {
+    if (!DASH_DATA) return EMPTY_AGG;
     const dIni = dataIni ? new Date(dataIni + 'T00:00:00') : null;
     const dFim = dataFim ? new Date(dataFim + 'T23:59:59') : null;
     const inRange = (ds) => {
@@ -153,10 +185,13 @@ export default function App() {
     };
 
     return { cruzada, totalStatus, totalCliente, kpis };
-  }, [cliente, status, dataIni, dataFim, hasDataFilter, clientes, statuses]);
+  }, [cliente, status, dataIni, dataFim, hasDataFilter, clientes, statuses, DASH_DATA]);
 
   // ===== Drill-down (respeita filtros de data, cliente e status) =====
+  const EMPTY_DRILL = { noShowQtd: {}, noShowOcc: {}, atrasoQtd: {}, atrasoOcc: {}, prodRows: {}, prodOcc: {} };
+
   const drillData = useMemo(() => {
+    if (!DASH_DATA) return EMPTY_DRILL;
     const filterClient = (map) => {
       if (cliente === 'all') return map || {};
       const out = {};
@@ -249,7 +284,7 @@ export default function App() {
     }
 
     return out;
-  }, [cliente, status, hasDataFilter, dataIni, dataFim]);
+  }, [cliente, status, hasDataFilter, dataIni, dataFim, DASH_DATA]);
 
   const noShowPorCliente = drillData.noShowQtd;
   const atrasoPorCliente = drillData.atrasoQtd;
@@ -258,12 +293,30 @@ export default function App() {
   const drillAtraso = drillData.atrasoOcc;
   const drillProd = drillData.prodOcc;
 
+  if (loading || !DASH_DATA) {
+    return (
+      <Layout className="app-layout">
+        <Header className="header">
+          <div className="nav-brand">
+            <img src="/logo-3zx.png" alt="Logo 3ZX" className="nav-logo" />
+            <div className="nav-wordmark">
+              <span className="nav-eyebrow">3ZX Logistica</span>
+              <Typography.Title level={3} className="nav-title" style={{ color: '#fff' }}>Follow Distribuicao</Typography.Title>
+            </div>
+          </div>
+        </Header>
+        <Content className="app" style={{ display: 'grid', placeItems: 'center', minHeight: '60vh' }}>
+          <Spin size="large" tip="Carregando dados..." />
+        </Content>
+      </Layout>
+    );
+  }
 
   return (
     <Layout className="app-layout">
       <Header className="header">
         <div className="nav-brand">
-          <img src="/distribuicao/logo-3zx.png" alt="Logo 3ZX" className="nav-logo" />
+          <img src="/logo-3zx.png" alt="Logo 3ZX" className="nav-logo" />
           <div className="nav-wordmark">
             <span className="nav-eyebrow">3ZX Logística</span>
             <Typography.Title level={3} className="nav-title" style={{ color: '#fff' }}>Follow Distribuição</Typography.Title>
@@ -315,7 +368,7 @@ export default function App() {
             <ClientesBars agg={agg} />
           </Col>
           <Col xs={24} className="reveal reveal-8">
-            <EvolucaoDiaria range={range} cliente={cliente} status={status} />
+            <EvolucaoDiaria range={range} cliente={cliente} status={status} DASH_DATA={DASH_DATA} />
           </Col>
         </Row>
 
@@ -358,8 +411,9 @@ export default function App() {
 
       <Footer className="footer">
         <Space split="⬢" size={12}>
-          <span>Dados: {DASH_DATA.dataMin} até {DASH_DATA.dataMax}</span>
+          <span>Dados: {DASH_DATA.dataMin} ate {DASH_DATA.dataMax}</span>
           <span>Total de registros: {fmtNum(agg.kpis.total)}</span>
+          {updatedAt && <span>Atualizado: {dayjs(updatedAt).format('HH:mm:ss')}</span>}
         </Space>
       </Footer>
     </Layout>
@@ -551,7 +605,7 @@ function ClientesBars({ agg }) {
   );
 }
 
-function EvolucaoDiaria({ range, cliente, status }) {
+function EvolucaoDiaria({ range, cliente, status, DASH_DATA }) {
   const option = useMemo(() => {
     const dIni = range && range[0] ? range[0].format('YYYY-MM-DD') : null;
     const dFim = range && range[1] ? range[1].format('YYYY-MM-DD') : null;
@@ -637,7 +691,7 @@ function EvolucaoDiaria({ range, cliente, status }) {
         },
       ],
     };
-  }, [range, cliente, status]);
+  }, [range, cliente, status, DASH_DATA]);
 
   return (
     <Card size="small" title="Evolução Diária de Cargas" className="chart-card">
@@ -698,7 +752,7 @@ function CrossTable({ agg, clientes, statuses }) {
   };
 
   return (
-    <Card size="small" title="Cargas por Cliente  Status" className="table-card">
+    <Card size="small" title="Cargas por Cliente // Status" className="table-card">
       <Table
         size="small"
         columns={columns}
