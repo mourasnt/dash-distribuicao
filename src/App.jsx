@@ -56,9 +56,14 @@ const KPI_CONFIG = [
 
 export default function App() {
   const { dash: DASH_DATA, updatedAt, loading } = useDashData();
-  const [cliente, setCliente] = useState('all');
-  const [status, setStatus] = useState('all');
+  const [cliente, setCliente] = useState(['all']);
+  const [status, setStatus] = useState(['all']);
   const [range, setRange] = useState(null);
+
+  const isAllCliente = cliente.includes('all');
+  const isAllStatus = status.includes('all');
+  const matchesCliente = (cl) => isAllCliente || cliente.includes(cl);
+  const matchesStatus = (st) => isAllStatus || status.includes(st);
 
   const clientes = useMemo(
     () => (DASH_DATA?.clientes || []).filter((c) => c !== 'SEM CLIENTE'),
@@ -72,12 +77,22 @@ export default function App() {
   const dataIni = range && range[0] ? range[0].format('YYYY-MM-DD') : '';
   const dataFim = range && range[1] ? range[1].format('YYYY-MM-DD') : '';
   const hasDataFilter = !!(dataIni || dataFim);
-  const hasFilter = cliente !== 'all' || status !== 'all' || hasDataFilter;
+  const hasFilter = !isAllCliente || !isAllStatus || hasDataFilter;
 
   const resetFilters = () => {
-    setCliente('all');
-    setStatus('all');
+    setCliente(['all']);
+    setStatus(['all']);
     setRange(null);
+  };
+
+  const onChangeClientes = (vals) => {
+    if (!vals.length || vals.includes('all')) return setCliente(['all']);
+    setCliente(vals);
+  };
+
+  const onChangeStatuses = (vals) => {
+    if (!vals.length || vals.includes('all')) return setStatus(['all']);
+    setStatus(vals);
   };
 
   const EMPTY_AGG = { cruzada: {}, totalStatus: {}, totalCliente: {}, kpis: { total: 0, noShow: 0, cancel: 0, finalizadas: 0, aderOrigem: 0, prod: 0 } };
@@ -94,8 +109,8 @@ export default function App() {
       return true;
     };
     const match = (cl, st) => {
-      if (cliente !== 'all' && cl !== cliente) return false;
-      if (status !== 'all' && st !== status) return false;
+      if (!matchesCliente(cl)) return false;
+      if (!matchesStatus(st)) return false;
       return true;
     };
 
@@ -128,13 +143,13 @@ export default function App() {
       finalizadas = totalStatus['ENTREGAS FINALIZADAS'] || 0;
       total = Object.values(totalCliente).reduce((s, v) => s + v, 0) || DASH_DATA.kpis.total;
 
-      if (status === 'all' || status === 'ENTREGAS FINALIZADAS') {
-        if (cliente === 'all' && status === 'all') {
+      if (isAllStatus || status.includes('ENTREGAS FINALIZADAS')) {
+        if (isAllCliente && isAllStatus) {
           aderOrigem = DASH_DATA.kpis.aderenciaOrigemCount;
         } else {
           let fin = 0;
           DASH_DATA.clientes.forEach((cl) => {
-            if (cliente !== 'all' && cl !== cliente) return;
+            if (!matchesCliente(cl)) return;
             const f = DASH_DATA.resumo.produtividadePorCliente[cl]?.total || 0;
             const atr = DASH_DATA.resumo.atrasoPorCliente[cl] || 0;
             fin += Math.max(f - atr, 0);
@@ -166,7 +181,7 @@ export default function App() {
       finalizadas = totalStatus['ENTREGAS FINALIZADAS'] || 0;
       total = Object.values(totalCliente).reduce((s, v) => s + v, 0) || Object.values(totalStatus).reduce((s, v) => s + v, 0);
 
-      if (cliente === 'all' && (status === 'all' || status === 'ENTREGAS FINALIZADAS')) {
+      if (isAllCliente && (isAllStatus || status.includes('ENTREGAS FINALIZADAS'))) {
         let sumAder = 0;
         Object.entries(DASH_DATA.diario).forEach(([ds, dv]) => {
           if (inRange(ds)) sumAder += dv.aderOrigem || 0;
@@ -193,16 +208,16 @@ export default function App() {
   const drillData = useMemo(() => {
     if (!DASH_DATA) return EMPTY_DRILL;
     const filterClient = (map) => {
-      if (cliente === 'all') return map || {};
+      if (isAllCliente) return map || {};
       const out = {};
       Object.entries(map || {}).forEach(([cl, v]) => {
-        if (cl === cliente) out[cl] = v;
+        if (cliente.includes(cl)) out[cl] = v;
       });
       return out;
     };
 
-    const noShowStatus = status === 'all' || status === 'NO SHOW';
-    const finStatus = status === 'all' || status === 'ENTREGAS FINALIZADAS';
+    const noShowStatus = isAllStatus || status.includes('NO SHOW');
+    const finStatus = isAllStatus || status.includes('ENTREGAS FINALIZADAS');
 
     const out = {
       noShowQtd: {},
@@ -249,26 +264,26 @@ export default function App() {
         if (!inRange(ds)) return;
         if (noShowStatus) {
           Object.entries(dv.drill_noShow || {}).forEach(([cl, occ]) => {
-            if (cliente !== 'all' && cl !== cliente) return;
+            if (!matchesCliente(cl)) return;
             out.noShowQtd[cl] = (out.noShowQtd[cl] || 0) + Object.values(occ).reduce((a, b) => a + b, 0);
           });
           mergeOcc(out.noShowOcc, dv.drill_noShow || {});
         }
         if (finStatus) {
           Object.entries(dv.drill_atraso || {}).forEach(([cl, occ]) => {
-            if (cliente !== 'all' && cl !== cliente) return;
+            if (!matchesCliente(cl)) return;
             out.atrasoQtd[cl] = (out.atrasoQtd[cl] || 0) + Object.values(occ).reduce((a, b) => a + b, 0);
           });
           mergeOcc(out.atrasoOcc, dv.drill_atraso || {});
           Object.entries(dv.drill_prod || {}).forEach(([cl, p]) => {
-            if (cliente !== 'all' && cl !== cliente) return;
+            if (!matchesCliente(cl)) return;
             const acc = (out.prodRows[cl] = out.prodRows[cl] || { paradas: 0, prod_sum: 0, total: 0 });
             acc.paradas += p.paradas || 0;
             acc.prod_sum += p.prod_sum || 0;
             acc.total += p.total || 0;
           });
           // ocorrências de produtividade não têm granularidade diária — usa o global
-          mergeOcc(out.prodOcc, cliente === 'all' ? DASH_DATA.drill.produtividade : {});
+          mergeOcc(out.prodOcc, isAllCliente ? DASH_DATA.drill.produtividade : {});
         }
       });
       // converte prodRows p/ formato {paradas, produtividade, total}
@@ -326,17 +341,21 @@ export default function App() {
           <Select
             size="middle"
             style={{ minWidth: 180 }}
+            mode="multiple"
+            maxTagCount={2}
             value={cliente}
-            onChange={setCliente}
+            onChange={onChangeClientes}
             showSearch
-            placeholder="Cliente: Todos"
+            placeholder="Clientes: Todos"
             options={[{ value: 'all', label: 'Todos os clientes' }, ...clientes.map((c) => ({ value: c, label: c }))]}
           />
           <Select
             size="middle"
             style={{ minWidth: 170 }}
+            mode="multiple"
+            maxTagCount={2}
             value={status}
-            onChange={setStatus}
+            onChange={onChangeStatuses}
             placeholder="Status: Todos"
             options={[{ value: 'all', label: 'Todos os status' }, ...statuses.map((s) => ({ value: s, label: s }))]}
           />
@@ -615,8 +634,10 @@ function EvolucaoDiaria({ range, cliente, status, DASH_DATA }) {
       if (dFim && ds > dFim) return false;
       return true;
     };
-    const matchCl = cliente === 'all';
-    const matchSt = status === 'all';
+    const isAllCliente = cliente.includes('all');
+    const isAllStatus = status.includes('all');
+    const matchCl = isAllCliente;
+    const matchSt = isAllStatus;
 
     const days = [];
     Object.entries(DASH_DATA.diario)
@@ -628,9 +649,9 @@ function EvolucaoDiaria({ range, cliente, status, DASH_DATA }) {
           tot = dv.tot_cliente ? Object.values(dv.tot_cliente).reduce((s, v) => s + v, 0) : 0;
         } else {
           Object.entries(dv.cruzada || {}).forEach(([st, clMap]) => {
-            if (!matchSt && st !== status) return;
+            if (!matchSt && !status.includes(st)) return;
             Object.entries(clMap).forEach(([cl, n]) => {
-              if (!matchCl && cl !== cliente) return;
+              if (!matchCl && !cliente.includes(cl)) return;
               tot += n;
             });
           });
