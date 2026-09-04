@@ -86,12 +86,24 @@ export default function App() {
   };
 
   const onChangeClientes = (vals) => {
-    if (!vals.length || vals.includes('all')) return setCliente(['all']);
+    if (!vals.length) return setCliente(['all']);
+    if (vals.includes('all')) {
+      if (cliente.includes('all')) {
+        return setCliente(vals.filter((v) => v !== 'all'));
+      }
+      return setCliente(['all']);
+    }
     setCliente(vals);
   };
 
   const onChangeStatuses = (vals) => {
-    if (!vals.length || vals.includes('all')) return setStatus(['all']);
+    if (!vals.length) return setStatus(['all']);
+    if (vals.includes('all')) {
+      if (status.includes('all')) {
+        return setStatus(vals.filter((v) => v !== 'all'));
+      }
+      return setStatus(['all']);
+    }
     setStatus(vals);
   };
 
