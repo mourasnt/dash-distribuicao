@@ -83,15 +83,15 @@ export default function DrillCard({
   };
 
   if (isProd) {
-    let entries = Object.entries(prodRows || {}).sort((a, b) => b[1].paradas - a[1].paradas);
+    let entries = Object.entries(prodRows || {}).sort((a, b) => (b[1].total || 0) - (a[1].total || 0));
     if (filterCliente && filterCliente !== 'all') {
       entries = entries.filter(([cl]) => cl === filterCliente);
     }
-    const totalParadas = entries.reduce((s, [, v]) => s + v.paradas, 0);
     const totalCargas = entries.reduce((s, [, v]) => s + (v.total || 0), 0);
+    const totalParadas = entries.reduce((s, [, v]) => s + v.paradas, 0);
     const mediaGlobal =
       entries.length > 0
-        ? entries.reduce((s, [, v]) => s + v.produtividade * v.paradas, 0) / (totalParadas || 1)
+        ? entries.reduce((s, [, v]) => s + v.produtividade * (v.total || 0), 0) / (totalCargas || 1)
         : 0;
 
     return (
@@ -122,7 +122,7 @@ export default function DrillCard({
         </div>
         <div className="dcard-list">
           {entries.map(([cl, v]) =>
-            renderRow(cl, totalParadas ? v.paradas / totalParadas : 0, [
+            renderRow(cl, totalCargas ? v.total / totalCargas : 0, [
               <span key="sub" className="dcard-subinfo num">{fmtPct(v.produtividade)}</span>,
               <span key="qtd" className="dcard-qtd num" title={`${fmtNum(v.total)} cargas`}>{fmtNum(v.total)}</span>,
             ], v.total)
