@@ -1,17 +1,19 @@
 import { useState } from 'react';
 import { Card, Empty, Flex, Typography } from 'antd';
 import { DownOutlined } from '@ant-design/icons';
-import { fmtPct, clientColor, initials, SPACING } from './utils.js';
+import { fmtPct, fmtNum, clientColor, initials, SPACING } from './utils.js';
 
 const { Text } = Typography;
 
-function OcorrenciasDetail({ cliente, occ }) {
+function OcorrenciasDetail({ cliente, occ, cargas }) {
   const total = occ.reduce((s, [, n]) => s + n, 0);
   return (
     <div className="dcard-detail">
       <div className="dcard-detail-header">
         <Text strong>{cliente}</Text>
-        <Text type="secondary">{total} ocorrências</Text>
+        <Text type="secondary">
+          {cargas != null ? `${fmtNum(cargas)} cargas · ${fmtNum(total)} ocorrências` : `${fmtNum(total)} ocorrências`}
+        </Text>
       </div>
       <ul className="ocorrencias-list">
         {occ.map(([tipo, n]) => (
@@ -28,11 +30,11 @@ function OcorrenciasDetail({ cliente, occ }) {
   );
 }
 
-function OcorrenciaPanel({ isOpen, cliente, ocorrencias }) {
+function OcorrenciaPanel({ isOpen, cliente, ocorrencias, cargas }) {
   return (
     <div className={`dcard-detail-wrap${isOpen ? ' open' : ''}`}>
       <div className="dcard-detail-inner">
-        {isOpen && <OcorrenciasDetail cliente={cliente} occ={ocorrencias} />}
+        {isOpen && <OcorrenciasDetail cliente={cliente} occ={ocorrencias} cargas={cargas} />}
       </div>
     </div>
   );
@@ -52,7 +54,7 @@ export default function DrillCard({
   const [openClient, setOpenClient] = useState(null);
   const toggle = (cl) => setOpenClient(openClient === cl ? null : cl);
 
-  const renderRow = (cl, share, rightCells) => {
+  const renderRow = (cl, share, rightCells, cargas) => {
     const isOpen = openClient === cl;
     const occ = Object.entries((ocorrencias && ocorrencias[cl]) || {}).sort(
       (a, b) => b[1] - a[1]
@@ -75,7 +77,7 @@ export default function DrillCard({
         <span className="sharebar" aria-hidden="true">
           <i style={{ width: `${Math.min(share * 100, 100)}%`, background: `hsl(${cc.hsl} 70% 48%)` }} />
         </span>
-        <OcorrenciaPanel isOpen={isOpen} cliente={cl} ocorrencias={occ} />
+        <OcorrenciaPanel isOpen={isOpen} cliente={cl} ocorrencias={occ} cargas={cargas} />
       </div>
     );
   };
@@ -86,6 +88,7 @@ export default function DrillCard({
       entries = entries.filter(([cl]) => cl === filterCliente);
     }
     const totalParadas = entries.reduce((s, [, v]) => s + v.paradas, 0);
+    const totalCargas = entries.reduce((s, [, v]) => s + (v.total || 0), 0);
     const mediaGlobal =
       entries.length > 0
         ? entries.reduce((s, [, v]) => s + v.produtividade * v.paradas, 0) / (totalParadas || 1)
@@ -105,8 +108,12 @@ export default function DrillCard({
       >
         <div className="dcard-kpis">
           <div className="mini-kpi">
+            <span>Cargas</span>
+            <strong className="num">{fmtNum(totalCargas)}</strong>
+          </div>
+          <div className="mini-kpi">
             <span>Paradas</span>
-            <strong className="num">{totalParadas.toLocaleString('pt-BR')}</strong>
+            <strong className="num">{fmtNum(totalParadas)}</strong>
           </div>
           <div className="mini-kpi">
             <span>Média</span>
@@ -117,8 +124,8 @@ export default function DrillCard({
           {entries.map(([cl, v]) =>
             renderRow(cl, totalParadas ? v.paradas / totalParadas : 0, [
               <span key="sub" className="dcard-subinfo num">{fmtPct(v.produtividade)}</span>,
-              <span key="qtd" className="dcard-qtd num">{v.paradas.toLocaleString('pt-BR')}</span>,
-            ])
+              <span key="qtd" className="dcard-qtd num" title={`${fmtNum(v.total)} cargas`}>{fmtNum(v.total)}</span>,
+            ], v.total)
           )}
           {entries.length === 0 && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Sem dados" />}
         </div>
