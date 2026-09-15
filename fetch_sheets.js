@@ -62,7 +62,7 @@ const fmtDate = (d) =>
 
 export async function fetchData() {
   const sheets = getSheets();
-  const range = `${SHEET}!A1:V`;
+  const range = `${SHEET}!A1:W`;
   const res = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range });
   const all = res.data.values || [];
   if (all.length <= HEADER_ROW) throw new Error('Planilha sem dados após o cabeçalho.');
@@ -72,6 +72,7 @@ export async function fetchData() {
     cliente: findCol(headers, 'CLIENTE'),
     horario: findCol(headers, 'Status do hor'),
     ocorrencia: findCol(headers, 'Ocorr'),
+    ocorrenciaDev: findCol(headers, 'Ocorrência Devolução'),
     prod: findCol(headers, 'Produtividade'),
     paradas: findCol(headers, 'Paradas'),
     devolucion: findCol(headers, 'evolu'),
@@ -91,6 +92,7 @@ export async function fetchData() {
     const status = String(get(idx.status) ?? '').trim() || 'SEM STATUS';
     const horario = String(get(idx.horario) ?? '').trim();
     const ocorrencia = String(get(idx.ocorrencia) ?? '').trim();
+    const ocorrenciaDev = String(get(idx.ocorrenciaDev) ?? '').trim();
     const romaneio = String(get(idx.romaneio) ?? '').trim();
     const placa = String(get(idx.placa) ?? '').trim();
     const nome = String(get(idx.nome) ?? '').trim();
@@ -98,7 +100,7 @@ export async function fetchData() {
     const paradas = parseFloat(String(get(idx.paradas) ?? '').replace(',', '.'));
     const devolucion = parseFloat(String(get(idx.devolucion) ?? '').replace(',', '.'));
     const data = parseData(get(idx.data));
-    records.push({ cliente, status, horario, ocorrencia, romaneio, placa, nome, prod, paradas, devolucion, data });
+    records.push({ cliente, status, horario, ocorrencia, ocorrenciaDev, romaneio, placa, nome, prod, paradas, devolucion, data });
   }
 
   const noShow = records.filter((r) => r.status === 'NO SHOW').length;
@@ -143,7 +145,12 @@ export async function fetchData() {
     dataMax = fmtDate(new Date(Math.max(...datas.map((d) => d.getTime()))));
   }
 
-  const ocorrenciasPor = (mask) => {
+const splitOcc = (v) => {
+    const out = v ? String(v).split(',').map((s) => s.trim()).filter(Boolean) : [];
+    return out.length ? out : ['S/O'];
+  };
+
+  const ocorrenciasPor = (mask, pick) => {
     const qtd = {};
     const occ = {};
     for (const cl of clientes) {
@@ -152,17 +159,22 @@ export async function fetchData() {
       qtd[cl] = sub.length;
       const oc = {};
       for (const r of sub) {
-        const key = r.ocorrencia || 'S/O';
-        oc[key] = (oc[key] || 0) + 1;
+        for (const key of pick(r)) {
+          oc[key] = (oc[key] || 0) + 1;
+        }
       }
       occ[cl] = oc;
     }
     return [qtd, occ];
   };
 
-  const [noShowPorCliente, noShowOcorrencias] = ocorrenciasPor((r) => r.status === 'NO SHOW');
+  const [noShowPorCliente, noShowOcorrencias] = ocorrenciasPor(
+    (r) => r.status === 'NO SHOW',
+    (r) => [r.ocorrencia || 'S/O']
+  );
   const [atrasoPorCliente, atrasoOcorrencias] = ocorrenciasPor(
-    (r) => r.status === 'ENTREGAS FINALIZADAS' && r.horario === 'FORA DO PRAZO'
+    (r) => r.status === 'ENTREGAS FINALIZADAS' && r.horario === 'FORA DO PRAZO',
+    (r) => [r.ocorrencia || 'S/O']
   );
 
   const prodPorCliente = {};
@@ -175,7 +187,10 @@ export async function fetchData() {
     prodPorCliente[cl] = { paradas: Math.round(paradas), produtividade: Math.round(prod * 10000) / 10000, total: s.length };
   }
 
-  const [, prodOcorrencias] = ocorrenciasPor((r) => r.status === 'ENTREGAS FINALIZADAS');
+  const [, prodOcorrencias] = ocorrenciasPor(
+  (r) => r.status === 'ENTREGAS FINALIZADAS',
+  (r) => splitOcc(r.ocorrenciaDev)
+);
 
   const diario = {};
   const byDate = new Map();
@@ -233,6 +248,13 @@ export async function fetchData() {
       if (pc !== null) p.prod_sum += pc;
     }
 
+    const gProdOcc = {};
+    for (const r of g.filter((x) => x.status === 'ENTREGAS FINALIZADAS')) {
+      for (const t of splitOcc(r.ocorrenciaDev)) {
+        (gProdOcc[r.cliente] = gProdOcc[r.cliente] || {})[t] = (gProdOcc[r.cliente][t] || 0) + 1;
+      }
+    }
+
     diario[datestr] = {
       cruzada: cruz,
       tot_status: totSt,
@@ -244,9 +266,10 @@ export async function fetchData() {
       total: g.length,
       prod_sum: Math.round(prodSum * 1e6) / 1e6,
       prod_n: prodN,
-      drill_noShow: gNoshow,
-      drill_atraso: gAtraso,
-      drill_prod: gProd,
+drill_noShow: gNoshow,
+    drill_atraso: gAtraso,
+    drill_prod: gProd,
+    drill_prod_occ: gProdOcc,
     };
   }
 

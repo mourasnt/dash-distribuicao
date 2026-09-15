@@ -294,8 +294,13 @@ export default function App() {
             acc.prod_sum += p.prod_sum || 0;
             acc.total += p.total || 0;
           });
-          // ocorrências de produtividade não têm granularidade diária — usa o global
-          mergeOcc(out.prodOcc, isAllCliente ? DASH_DATA.drill.produtividade : {});
+          Object.entries(dv.drill_prod_occ || {}).forEach(([cl, occ]) => {
+            if (!matchesCliente(cl)) return;
+            out.prodOcc[cl] = out.prodOcc[cl] || {};
+            Object.entries(occ).forEach(([tipo, n]) => {
+              out.prodOcc[cl][tipo] = (out.prodOcc[cl][tipo] || 0) + n;
+            });
+          });
         }
       });
       // converte prodRows p/ formato {paradas, produtividade, total}
