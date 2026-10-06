@@ -50,6 +50,7 @@ export default function DrillCard({
   prodRows,
   filterCliente,
   extra,
+  limit,
 }) {
   const [openClient, setOpenClient] = useState(null);
   const toggle = (cl) => setOpenClient(openClient === cl ? null : cl);
@@ -83,7 +84,10 @@ export default function DrillCard({
   };
 
   if (isProd) {
-    let entries = Object.entries(prodRows || {}).sort((a, b) => (b[1].total || 0) - (a[1].total || 0));
+    const allEntries = Object.entries(prodRows || {}).sort(
+      (a, b) => (b[1].total || 0) - (a[1].total || 0)
+    );
+    let entries = allEntries;
     if (filterCliente && filterCliente !== 'all') {
       entries = entries.filter(([cl]) => cl === filterCliente);
     }
@@ -93,6 +97,10 @@ export default function DrillCard({
       entries.length > 0
         ? entries.reduce((s, [, v]) => s + v.produtividade * (v.total || 0), 0) / (totalCargas || 1)
         : 0;
+    const shown = limit ? entries.slice(0, limit) : entries;
+    const limitNote = limit && entries.length > limit ? (
+      <div className="dcard-limit-note">Mostrando {limit} de {fmtNum(entries.length)}</div>
+    ) : null;
 
     return (
       <Card
@@ -121,7 +129,7 @@ export default function DrillCard({
           </div>
         </div>
         <div className="dcard-list">
-          {entries.map(([cl, v]) =>
+          {shown.map(([cl, v]) =>
             renderRow(cl, totalCargas ? v.total / totalCargas : 0, [
               <span key="sub" className="dcard-subinfo num">{fmtPct(v.produtividade)}</span>,
               <span key="qtd" className="dcard-qtd num" title={`${fmtNum(v.total)} cargas`}>{fmtNum(v.total)}</span>,
@@ -129,12 +137,17 @@ export default function DrillCard({
           )}
           {entries.length === 0 && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Sem dados" />}
         </div>
+        {limitNote}
       </Card>
     );
   }
 
-  const entries = Object.entries(rows || {}).sort((a, b) => b[1] - a[1]);
-  const totalQtd = entries.reduce((s, [, v]) => s + v, 0);
+  const allQtd = Object.entries(rows || {}).sort((a, b) => b[1] - a[1]);
+  const entries = limit ? allQtd.slice(0, limit) : allQtd;
+  const totalQtd = allQtd.reduce((s, [, v]) => s + v, 0);
+  const limitNote = limit && allQtd.length > limit ? (
+    <div className="dcard-limit-note">Mostrando {limit} de {fmtNum(allQtd.length)}</div>
+  ) : null;
 
   return (
     <Card
@@ -166,6 +179,7 @@ export default function DrillCard({
         )}
         {entries.length === 0 && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Sem dados" />}
       </div>
+      {limitNote}
     </Card>
   );
 }

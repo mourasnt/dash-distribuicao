@@ -96,11 +96,13 @@ export async function fetchData() {
     const romaneio = String(get(idx.romaneio) ?? '').trim();
     const placa = String(get(idx.placa) ?? '').trim();
     const nome = String(get(idx.nome) ?? '').trim();
+    // '#N/A' etc. = erro de fórmula na planilha → agrupa como SEM MOTORISTA
+    const motorista = !nome || nome.startsWith('#') ? 'SEM MOTORISTA' : nome;
     const prod = parseProd(get(idx.prod));
     const paradas = parseFloat(String(get(idx.paradas) ?? '').replace(',', '.'));
     const devolucion = parseFloat(String(get(idx.devolucion) ?? '').replace(',', '.'));
     const data = parseData(get(idx.data));
-    records.push({ cliente, status, horario, ocorrencia, ocorrenciaDev, romaneio, placa, nome, prod, paradas, devolucion, data });
+    records.push({ cliente, status, horario, ocorrencia, ocorrenciaDev, romaneio, placa, nome, motorista, prod, paradas, devolucion, data });
   }
 
   const noShow = records.filter((r) => r.status === 'NO SHOW').length;
@@ -121,7 +123,7 @@ export async function fetchData() {
   const produtividadeMedia = prodVals.length ? prodVals.reduce((a, b) => a + b, 0) / prodVals.length : 0;
   const prodCargasN = prodVals.length;
 
-  const statusOrdem = [
+  const statusCanonicos = [
     'ENTREGAS FINALIZADAS', 'CANCELADO PELO CLIENTE', 'NO SHOW',
     'BACKUP', 'QUEBROU', 'EM TRANSITO', 'MOTORISTA AGENDADO',
     'A CAMINHO DO CD', 'SEM STATUS',
@@ -136,6 +138,62 @@ export async function fetchData() {
     totalPorStatus[r.status] = (totalPorStatus[r.status] || 0) + 1;
     totalPorCliente[r.cliente] = (totalPorCliente[r.cliente] || 0) + 1;
   }
+  // Inclui na ordem qualquer status novo digitado na planilha (fora da lista fixa).
+  const statusExtras = Object.keys(totalPorStatus).filter((s) => !statusCanonicos.includes(s)).sort((a, b) => a.localeCompare(b));
+  const statusOrdem = [...statusCanonicos, ...statusExtras];
+
+  const splitOcc = (v) => {
+    const out = v ? String(v).split(',').map((s) => s.trim()).filter(Boolean) : [];
+    return out.length ? out : ['S/O'];
+  };
+
+  // ---------- Dimensão motorista (coluna Nome) ----------
+  // tripla: {status: {cliente: {motorista: n}}} — base esparsa p/ filtros combinados.
+  const motoristas = [...new Set(records.map((r) => r.motorista))].sort((a, b) => a.localeCompare(b));
+  const totalPorMotorista = {};
+  const tripla = {};
+  const aderClMot = {};
+  const drillNoShowClMot = {};
+  const drillAtrasoClMot = {};
+  const drillProdClMot = {};
+  const drillProdOccClMot = {};
+  for (const r of records) {
+    totalPorMotorista[r.motorista] = (totalPorMotorista[r.motorista] || 0) + 1;
+    ((tripla[r.status] = tripla[r.status] || {})[r.cliente] = (tripla[r.status][r.cliente] || {}));
+    tripla[r.status][r.cliente][r.motorista] = (tripla[r.status][r.cliente][r.motorista] || 0) + 1;
+    if (r.status === 'ENTREGAS FINALIZADAS' && r.horario === 'NO PRAZO') {
+      (aderClMot[r.cliente] = aderClMot[r.cliente] || {})[r.motorista] =
+        ((aderClMot[r.cliente] || {})[r.motorista] || 0) + 1;
+    }
+    if (r.status === 'NO SHOW') {
+      const o = r.ocorrencia || 'S/O';
+      ((drillNoShowClMot[r.cliente] = drillNoShowClMot[r.cliente] || {})[r.motorista] =
+        (drillNoShowClMot[r.cliente][r.motorista] || {}));
+      drillNoShowClMot[r.cliente][r.motorista][o] = (drillNoShowClMot[r.cliente][r.motorista][o] || 0) + 1;
+    }
+    if (r.status === 'ENTREGAS FINALIZADAS' && r.horario === 'FORA DO PRAZO') {
+      const o = r.ocorrencia || 'S/O';
+      ((drillAtrasoClMot[r.cliente] = drillAtrasoClMot[r.cliente] || {})[r.motorista] =
+        (drillAtrasoClMot[r.cliente][r.motorista] || {}));
+      drillAtrasoClMot[r.cliente][r.motorista][o] = (drillAtrasoClMot[r.cliente][r.motorista][o] || 0) + 1;
+    }
+    if (r.status === 'ENTREGAS FINALIZADAS') {
+      const p = (drillProdClMot[r.cliente] = drillProdClMot[r.cliente] || {})[r.motorista] =
+        (drillProdClMot[r.cliente][r.motorista] || { paradas: 0, prod_sum: 0, total: 0, n: 0 });
+      p.total++;
+      if (!isNaN(r.paradas)) p.paradas += r.paradas;
+      const pc = prodCarga(r);
+      if (pc !== null) {
+        p.prod_sum += pc;
+        p.n++;
+      }
+      for (const t of splitOcc(r.ocorrenciaDev)) {
+        ((drillProdOccClMot[r.cliente] = drillProdOccClMot[r.cliente] || {})[r.motorista] =
+          (drillProdOccClMot[r.cliente][r.motorista] || {}));
+        drillProdOccClMot[r.cliente][r.motorista][t] = (drillProdOccClMot[r.cliente][r.motorista][t] || 0) + 1;
+      }
+    }
+  }
 
   const datas = records.map((r) => r.data).filter(Boolean);
   let dataMin = null;
@@ -144,11 +202,6 @@ export async function fetchData() {
     dataMin = fmtDate(new Date(Math.min(...datas.map((d) => d.getTime()))));
     dataMax = fmtDate(new Date(Math.max(...datas.map((d) => d.getTime()))));
   }
-
-const splitOcc = (v) => {
-    const out = v ? String(v).split(',').map((s) => s.trim()).filter(Boolean) : [];
-    return out.length ? out : ['S/O'];
-  };
 
   const ocorrenciasPor = (mask, pick) => {
     const qtd = {};
@@ -214,6 +267,9 @@ const splitOcc = (v) => {
     const cruz = {};
     const totSt = {};
     const totCl = {};
+    // tripla do dia: {status: {cliente: {motorista: n}}}
+    const triplaDia = {};
+    const aderCm = {};
     let ader = 0;
     let noshow = 0;
     let cancel = 0;
@@ -224,11 +280,18 @@ const splitOcc = (v) => {
       (cruz[r.status] = cruz[r.status] || {})[r.cliente] = (cruz[r.status][r.cliente] || 0) + 1;
       totSt[r.status] = (totSt[r.status] || 0) + 1;
       totCl[r.cliente] = (totCl[r.cliente] || 0) + 1;
+      ((triplaDia[r.status] = triplaDia[r.status] || {})[r.cliente] =
+        (triplaDia[r.status][r.cliente] || {}));
+      triplaDia[r.status][r.cliente][r.motorista] = (triplaDia[r.status][r.cliente][r.motorista] || 0) + 1;
       if (r.status === 'NO SHOW') noshow++;
       if (r.status === 'CANCELADO PELO CLIENTE') cancel++;
       if (r.status === 'ENTREGAS FINALIZADAS') {
         fin++;
-        if (r.horario === 'NO PRAZO') ader++;
+        if (r.horario === 'NO PRAZO') {
+          ader++;
+          (aderCm[r.cliente] = aderCm[r.cliente] || {})[r.motorista] =
+            ((aderCm[r.cliente] || {})[r.motorista] || 0) + 1;
+        }
       }
       const pc = prodCarga(r);
       if (pc !== null) {
@@ -237,15 +300,41 @@ const splitOcc = (v) => {
       }
     }
 
+    const occMapCm = (sub, pick) => {
+      const out = {};
+      for (const r of sub) {
+        for (const t of pick(r)) {
+          (((out[r.cliente] = out[r.cliente] || {})[r.motorista] =
+            (out[r.cliente][r.motorista] || {})));
+          out[r.cliente][r.motorista][t] = (out[r.cliente][r.motorista][t] || 0) + 1;
+        }
+      }
+      return out;
+    };
+
     const gNoshow = occMap(g.filter((r) => r.status === 'NO SHOW'));
     const gAtraso = occMap(g.filter((r) => r.status === 'ENTREGAS FINALIZADAS' && r.horario === 'FORA DO PRAZO'));
+    const gNoshowCm = occMapCm(g.filter((r) => r.status === 'NO SHOW'), (r) => [r.ocorrencia || 'S/O']);
+    const gAtrasoCm = occMapCm(
+      g.filter((r) => r.status === 'ENTREGAS FINALIZADAS' && r.horario === 'FORA DO PRAZO'),
+      (r) => [r.ocorrencia || 'S/O']
+    );
     const gProd = {};
+    const gProdCm = {};
     for (const r of g.filter((x) => x.status === 'ENTREGAS FINALIZADAS')) {
       const p = (gProd[r.cliente] = gProd[r.cliente] || { paradas: 0, prod_sum: 0, total: 0 });
       p.total++;
       if (!isNaN(r.paradas)) p.paradas += r.paradas;
       const pc = prodCarga(r);
       if (pc !== null) p.prod_sum += pc;
+      const pm = (gProdCm[r.cliente] = gProdCm[r.cliente] || {})[r.motorista] =
+        (gProdCm[r.cliente][r.motorista] || { paradas: 0, prod_sum: 0, total: 0, n: 0 });
+      pm.total++;
+      if (!isNaN(r.paradas)) pm.paradas += r.paradas;
+      if (pc !== null) {
+        pm.prod_sum += pc;
+        pm.n++;
+      }
     }
 
     const gProdOcc = {};
@@ -254,11 +343,17 @@ const splitOcc = (v) => {
         (gProdOcc[r.cliente] = gProdOcc[r.cliente] || {})[t] = (gProdOcc[r.cliente][t] || 0) + 1;
       }
     }
+    const gProdOccCm = occMapCm(
+      g.filter((x) => x.status === 'ENTREGAS FINALIZADAS'),
+      (r) => splitOcc(r.ocorrenciaDev)
+    );
 
     diario[datestr] = {
       cruzada: cruz,
       tot_status: totSt,
       tot_cliente: totCl,
+      tripla: triplaDia,
+      ader_cm: aderCm,
       aderOrigem: ader,
       noShow: noshow,
       cancel,
@@ -270,6 +365,10 @@ drill_noShow: gNoshow,
     drill_atraso: gAtraso,
     drill_prod: gProd,
     drill_prod_occ: gProdOcc,
+    drill_noShow_cm: gNoshowCm,
+    drill_atraso_cm: gAtrasoCm,
+    drill_prod_cm: gProdCm,
+    drill_prod_occ_cm: gProdOccCm,
     };
   }
 
@@ -288,10 +387,22 @@ drill_noShow: gNoshow,
     totalPorCliente,
     statusOrdem,
     clientes,
+    motoristas,
+    totalPorMotorista,
+    tripla,
+    aderClMot,
     dataMin,
     dataMax,
     diario,
-    drill: { noShow: noShowOcorrencias, atraso: atrasoOcorrencias, produtividade: prodOcorrencias },
+    drill: {
+      noShow: noShowOcorrencias,
+      atraso: atrasoOcorrencias,
+      produtividade: prodOcorrencias,
+      noShowClMot: drillNoShowClMot,
+      atrasoClMot: drillAtrasoClMot,
+      prodClMot: drillProdClMot,
+      prodOccClMot: drillProdOccClMot,
+    },
     resumo: {
       noShowPorCliente,
       atrasoPorCliente,

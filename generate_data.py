@@ -38,6 +38,8 @@ df['OCORRENCIA'] = df[COL_OCORRENCIA].fillna('').astype(str)
 df['ROMANEIO'] = df[COL_ROMANEIO].fillna('').astype(str)
 df['PLACA'] = df[COL_PLACA].fillna('').astype(str)
 df['NOME'] = df[COL_NOME].fillna('').astype(str).str.strip()
+# '#N/A' etc. = erro de fórmula na planilha → agrupa como SEM MOTORISTA
+df['MOTORISTA'] = df['NOME'].apply(lambda x: 'SEM MOTORISTA' if (not x or x.startswith('#')) else x)
 
 total = len(df)
 no_show = (df['STATUS'] == 'NO SHOW').sum()
@@ -59,12 +61,54 @@ prod_vals = df[fin_mask].apply(prod_carga, axis=1).dropna()
 produtividade_media = float(prod_vals.mean()) if len(prod_vals) else 0.0
 prod_cargas_n = int(len(prod_vals))
 
-status_ordem = [
+status_canonicos = [
     'ENTREGAS FINALIZADAS', 'CANCELADO PELO CLIENTE', 'NO SHOW',
     'BACKUP', 'QUEBROU', 'EM TRANSITO', 'MOTORISTA AGENDADO',
     'A CAMINHO DO CD', 'SEM STATUS',
 ]
 clientes = sorted([c for c in df['CLIENTE'].unique() if c != 'SEM CLIENTE'])
+motoristas = sorted(df['MOTORISTA'].unique())
+
+# ---------- DIMENSÃO MOTORISTA ----------
+# tripla[status][cliente][motorista] = n
+# aderClMot[cliente][motorista] = n (finalizadas no prazo)
+# noShowClMot/atrasoClMot/prodOccClMot[cliente][motorista] = {ocorrencia: n}
+# prodClMot[cliente][motorista] = {paradas, prod_sum, total, n}
+tri = {}
+ader_cm = {}
+noShow_cm = {}
+atraso_cm = {}
+prod_cm = {}
+prodOcc_cm = {}
+for _, r in df.iterrows():
+    st, cl, mo = r['STATUS'], r['CLIENTE'], r['MOTORISTA']
+    tri.setdefault(st, {}).setdefault(cl, {})
+    tri[st][cl][mo] = tri[st][cl].get(mo, 0) + 1
+    if st == 'ENTREGAS FINALIZADAS':
+        if r['HORARIO'] == 'NO PRAZO':
+            ader_cm.setdefault(cl, {})[mo] = ader_cm.get(cl, {}).get(mo, 0) + 1
+        p = prod_cm.setdefault(cl, {}).setdefault(
+            mo, {'paradas': 0, 'prod_sum': 0.0, 'total': 0, 'n': 0})
+        p['total'] += 1
+        if pd.notna(r['PARADAS']):
+            p['paradas'] += int(r['PARADAS'])
+        pc = prod_carga(r)
+        if pc is not None:
+            p['prod_sum'] += pc
+            p['n'] += 1
+        o = str(r['OCORRENCIA']).strip() or 'S/O'
+        prodOcc_cm.setdefault(cl, {}).setdefault(mo, {})
+        prodOcc_cm[cl][mo][o] = prodOcc_cm[cl][mo].get(o, 0) + 1
+    elif st == 'NO SHOW':
+        o = str(r['OCORRENCIA']).strip() or 'S/O'
+        oc = noShow_cm.setdefault(cl, {}).setdefault(mo, {})
+        oc[o] = oc.get(o, 0) + 1
+    if st == 'ENTREGAS FINALIZADAS' and r['HORARIO'] == 'FORA DO PRAZO':
+        o = str(r['OCORRENCIA']).strip() or 'S/O'
+        oc = atraso_cm.setdefault(cl, {}).setdefault(mo, {})
+        oc[o] = oc.get(o, 0) + 1
+
+total_por_motorista = {m: int((df['MOTORISTA'] == m).sum()) for m in motoristas}
 
 # Tabela cruzada: status x cliente
 cruzada = {}
@@ -77,6 +121,9 @@ for st in status_presentes:
 # Totais por status e por cliente
 total_por_status = {st: int((df['STATUS'] == st).sum()) for st in status_presentes}
 total_por_cliente = {cl: int((df['CLIENTE'] == cl).sum()) for cl in clientes}
+# Inclui na ordem qualquer status novo da planilha fora da lista fixa.
+status_extras = sorted([s for s in status_presentes if s not in status_canonicos])
+status_ordem = status_canonicos + status_extras
 
 # Datas min/max
 data_min = df['DATA'].min().strftime('%Y-%m-%d') if pd.notna(df['DATA'].min()) else None
@@ -184,6 +231,41 @@ for datestr, g in df.groupby('DATASTR'):
         if pc is not None:
             p['prod_sum'] += pc
 
+    # ---- Dimensão motorista por dia ----
+    g_tri = {}
+    g_ader_cm = {}
+    g_noshow_cm = {}
+    g_atraso_cm = {}
+    g_prod_cm = {}
+    g_prod_occ_cm = {}
+    for _, r in g.iterrows():
+        st, cl, mo = r['STATUS'], r['CLIENTE'], r['MOTORISTA']
+        g_tri.setdefault(st, {}).setdefault(cl, {})
+        g_tri[st][cl][mo] = g_tri[st][cl].get(mo, 0) + 1
+        if st == 'ENTREGAS FINALIZADAS':
+            if r['HORARIO'] == 'NO PRAZO':
+                g_ader_cm.setdefault(cl, {})[mo] = g_ader_cm.get(cl, {}).get(mo, 0) + 1
+            p = g_prod_cm.setdefault(cl, {}).setdefault(
+                mo, {'paradas': 0, 'prod_sum': 0.0, 'total': 0, 'n': 0})
+            p['total'] += 1
+            if pd.notna(r['PARADAS']):
+                p['paradas'] += int(r['PARADAS'])
+            pc = prod_carga(r)
+            if pc is not None:
+                p['prod_sum'] += pc
+                p['n'] += 1
+            o = str(r['OCORRENCIA']).strip() or 'S/O'
+            g_prod_occ_cm.setdefault(cl, {}).setdefault(mo, {})
+            g_prod_occ_cm[cl][mo][o] = g_prod_occ_cm[cl][mo].get(o, 0) + 1
+        elif st == 'NO SHOW':
+            o = str(r['OCORRENCIA']).strip() or 'S/O'
+            oc = g_noshow_cm.setdefault(cl, {}).setdefault(mo, {})
+            oc[o] = oc.get(o, 0) + 1
+        if st == 'ENTREGAS FINALIZADAS' and r['HORARIO'] == 'FORA DO PRAZO':
+            o = str(r['OCORRENCIA']).strip() or 'S/O'
+            oc = g_atraso_cm.setdefault(cl, {}).setdefault(mo, {})
+            oc[o] = oc.get(o, 0) + 1
+
     diario[datestr] = {
         'cruzada': cruz,
         'tot_status': tot_st,
@@ -198,6 +280,12 @@ for datestr, g in df.groupby('DATASTR'):
         'drill_noShow': g_noshow,
         'drill_atraso': g_atraso,
         'drill_prod': g_prod,
+        'tripla': g_tri,
+        'ader_cm': g_ader_cm,
+        'drill_noShow_cm': g_noshow_cm,
+        'drill_atraso_cm': g_atraso_cm,
+        'drill_prod_cm': g_prod_cm,
+        'drill_prod_occ_cm': g_prod_occ_cm,
     }
 
 result = {
@@ -215,6 +303,10 @@ result = {
     'totalPorCliente': total_por_cliente,
     'statusOrdem': status_ordem,
     'clientes': clientes,
+    'motoristas': motoristas,
+    'totalPorMotorista': total_por_motorista,
+    'tripla': tri,
+    'aderClMot': ader_cm,
     'dataMin': data_min,
     'dataMax': data_max,
     'diario': diario,
@@ -222,6 +314,10 @@ result = {
         'noShow': no_show_ocorrencias,
         'atraso': atraso_ocorrencias,
         'produtividade': prod_ocorrencias,
+        'noShowClMot': noShow_cm,
+        'atrasoClMot': atraso_cm,
+        'prodClMot': prod_cm,
+        'prodOccClMot': prodOcc_cm,
     },
     'resumo': {
         'noShowPorCliente': no_show_por_cliente,

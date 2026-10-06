@@ -1,5 +1,6 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
+import { BrowserRouter } from 'react-router-dom';
 import { ConfigProvider } from 'antd';
 import ptBR from 'antd/locale/pt_BR';
 import App from './App.jsx';
@@ -22,7 +23,9 @@ createRoot(document.getElementById('root')).render(
         },
       }}
     >
-      <App />
+      <BrowserRouter basename="/distribuicao">
+        <App />
+      </BrowserRouter>
     </ConfigProvider>
   </React.StrictMode>
 );
